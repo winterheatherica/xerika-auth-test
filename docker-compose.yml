@@ -1,0 +1,288 @@
+name: xerika
+
+services:
+  postgres-rust:
+    image: postgres:17
+    container_name: xerika-postgres-rust
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: erika
+      POSTGRES_DB: xerika
+    ports:
+      - "15561:5432"
+    volumes:
+      - pgdata-rust:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d xerika"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis-rust:
+    image: redis:7-alpine
+    container_name: xerika-redis-rust
+    command: ["redis-server", "--requirepass", "xerika", "--appendonly", "yes"]
+    volumes:
+      - redisdata-rust:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a xerika ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  auth-server-rust:
+    build:
+      context: ./auth-server
+      dockerfile: Dockerfile
+    image: xerika/auth-server-rust:latest
+    container_name: xerika-auth-server-rust
+    environment:
+      AUTH_ISSUER_URL: http://localhost:8081
+      DATABASE_URL: postgres://postgres:erika@postgres-rust:5432/xerika?sslmode=disable
+      REDIS_HOST: redis-rust
+      REDIS_PORT: "6379"
+      REDIS_PASS: xerika
+      AUTH_JWT_KEYS_DIR: /data/keys
+      AUTH_TOKEN_HMAC_KEY: dev-allinone-hmac-key-do-not-use-in-production
+    ports:
+      - "8081:8080"
+    volumes:
+      - auth-keys-rust:/data/keys
+    depends_on:
+      postgres-rust:
+        condition: service_healthy
+      redis-rust:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/q/health/ready || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  postgres-java:
+    image: postgres:17
+    container_name: xerika-postgres-java
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: erika
+      POSTGRES_DB: xerika-java
+    ports:
+      - "15562:5432"
+    volumes:
+      - pgdata-java:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d xerika-java"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis-java:
+    image: redis:7-alpine
+    container_name: xerika-redis-java
+    command: ["redis-server", "--requirepass", "xerika", "--appendonly", "yes"]
+    volumes:
+      - redisdata-java:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a xerika ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  auth-server-java:
+    build:
+      context: ./auth-server-but-java
+      dockerfile: Dockerfile
+    image: xerika/auth-server-java:latest
+    container_name: xerika-auth-server-java
+    environment:
+      AUTH_ISSUER_URL: http://localhost:8080
+      DB_URL: jdbc:postgresql://postgres-java:5432/xerika-java?sslmode=disable
+      DB_USER: postgres
+      DB_PASS: erika
+      REDIS_HOST: redis-java
+      REDIS_PORT: "6379"
+      REDIS_PASS: xerika
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres-java:
+        condition: service_healthy
+      redis-java:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/q/health/ready || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 18
+      start_period: 60s
+
+  auth-admin-rust:
+    build:
+      context: ./auth-admin-but-java
+      dockerfile: Dockerfile
+    image: xerika/auth-admin-rust:latest
+    container_name: xerika-auth-admin-rust
+    environment:
+      AUTH_BACKEND_URL: http://auth-server-rust:8080
+    ports:
+      - "3001:3000"
+    depends_on:
+      - auth-server-rust
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/login || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  auth-admin-java:
+    build:
+      context: ./auth-admin-but-java
+      dockerfile: Dockerfile
+    image: xerika/auth-admin-java:latest
+    container_name: xerika-auth-admin-java
+    environment:
+      AUTH_BACKEND_URL: http://auth-server-java:8080
+    ports:
+      - "3002:3000"
+    depends_on:
+      - auth-server-java
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/login || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  # ----------------------------------------------------------------- JTIK backends
+  postgres-jtik:
+    image: postgres:17
+    container_name: xerika-postgres-jtik
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: erika
+      POSTGRES_DB: kpjtik
+    ports:
+      - "15563:5432"
+    volumes:
+      - pgdata-jtik:/var/lib/postgresql/data
+      - ./kpjtik-db/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kpjtik"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  kpjtik-lecturer:
+    build:
+      context: ./kpjtikLecturer
+      dockerfile: Dockerfile
+    image: xerika/kpjtik-lecturer:latest
+    container_name: xerika-kpjtik-lecturer
+    env_file:
+      - path: ./kpjtikLecturer/.env
+        required: false
+    environment:
+      PORT: "1337"
+      PG_HOST: postgres-jtik
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_PASSWORD: erika
+      PG_DATABASE: kpjtik
+      AUTH_SERVER_URL: http://auth-server-java:8080
+    ports:
+      - "1337:1337"
+    depends_on:
+      postgres-jtik:
+        condition: service_healthy
+      auth-server-java:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:1337/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  kpjtik-student:
+    build:
+      context: ./kpjtikStudent
+      dockerfile: Dockerfile
+    image: xerika/kpjtik-student:latest
+    container_name: xerika-kpjtik-student
+    env_file:
+      - path: ./kpjtikStudent/.env
+        required: false
+    environment:
+      PORT: "1337"
+      PG_HOST: postgres-jtik
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_PASSWORD: erika
+      PG_DATABASE: kpjtik
+      AUTH_SERVER_URL: http://auth-server-java:8080
+    ports:
+      - "1338:1337"
+    depends_on:
+      postgres-jtik:
+        condition: service_healthy
+      auth-server-java:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:1337/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  prometheus:
+    image: prom/prometheus
+    container_name: xerika-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - auth-server-rust
+      - auth-server-java
+
+  grafana:
+    image: grafana/grafana
+    container_name: xerika-grafana
+    ports:
+      - "3004:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata-rust:
+  pgdata-java:
+  pgdata-jtik:
+  redisdata-rust:
+  redisdata-java:
+  auth-keys-rust:
+  grafana-data:

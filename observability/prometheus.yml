@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'auth-server-java'
+    metrics_path: '/q/metrics'
+    static_configs:
+      - targets: ['auth-server-java:8080']
+        labels:
+          runtime: 'jvm'
+          framework: 'quarkus'
+  - job_name: 'auth-server-rust'
+    metrics_path: '/q/metrics'
+    static_configs:
+      - targets: ['auth-server-rust:8080']
+        labels:
+          runtime: 'native'
+          framework: 'actix'
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
